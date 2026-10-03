@@ -1,0 +1,19 @@
+# Environment variables
+.env
+
+# Local data lakehouse storage (mimics S3 / ADLS)
+data/
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.pytest_cache/
+
+# Spark & Metastore artifacts
+.spark-warehouse/
+metastore_db/
+derby.log
