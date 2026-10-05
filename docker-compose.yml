@@ -1,32 +1,89 @@
-version: "3.8"
-
-networks:
-  streaming-net:
-    driver: bridge
-
 services:
+  # ============================================================================
+  # Kafka Broker in KRaft mode (no ZooKeeper)
+  # Uses official Apache Kafka image pinned to 3.7.1
+  # Two listeners configured:
+  #   - INTERNAL (kafka:29092): For containers on 'orders-network'
+  #   - EXTERNAL (localhost:9092): For host machine scripts & testing
+  # ============================================================================
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: kafka
+    image: apache/kafka:3.7.1
+    container_name: orders-kafka
+    hostname: kafka
     ports:
       - "9092:9092"
-      - "9093:9093"
     environment:
+      # KRaft node identity and combined roles
       KAFKA_NODE_ID: 1
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
-      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093'
-      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      CLUSTER_ID: '4L622nShTUiBenA3heAaGw'
+
+      # Listener Configuration:
+      # INTERNAL is for container-to-container communication (Spark, Producer, Kafka-UI)
+      # EXTERNAL is mapped to host port 9092 for local development/testing from host
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://kafka:29092,EXTERNAL://localhost:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
-      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
-    volumes:
-      - ./data/kafka:/tmp/kraft-combined-logs
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+
+      # Single-node cluster settings
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_LOG_RETENTION_HOURS: 24
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 10s
+      retries: 6
+      start_period: 10s
     networks:
-      - streaming-net
+      - orders-network
+
+  # ============================================================================
+  # Init container to ensure the 'orders' topic exists with 3 partitions
+  # ============================================================================
+  init-kafka:
+    image: apache/kafka:3.7.1
+    container_name: orders-init-kafka
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: [ "/bin/sh", "-c" ]
+    command: |
+      "
+      echo 'Waiting for Kafka broker to be ready...'
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic orders --partitions 3 --replication-factor 1
+      echo 'Topic orders created or already exists:'
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --describe --topic orders
+      "
+    networks:
+      - orders-network
+
+  # ============================================================================
+  # Lightweight Web UI for inspecting Kafka topics, partitions, and messages
+  # Accessible on host machine at http://localhost:8081
+  # ============================================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: orders-kafka-ui
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-kraft
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      DYNAMIC_CONFIG_ENABLED: 'true'
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - orders-network
+
+  # ============================================================================
+  # Python Producer Service
+  # Generates orders and publishes to Kafka with city as key
+  # ============================================================================
