@@ -93,6 +93,62 @@ class OrderEventGenerator:
         # 2. Fault: Duplicate event
         if roll < duplicate_thresh:
             if self.order_history:
+                replayed_order = random.choice(self.order_history)
+                key = replayed_order.get("city", "Mumbai")
+                payload = json.dumps(replayed_order)
+                return key, payload, "DUPLICATE"
+            # If history is empty, fall through and create a clean order to seed history
+            order = generate_clean_order()
+            self._record_history(order)
+            return order["city"], json.dumps(order), "NORMAL"
 
-    def next_event(self):
-        return self._generate_valid_order()
+        # 3. Fault: Late event
+        if roll < late_thresh:
+            # 2 to 10 minutes (120 to 600 seconds) in the past
+            lag_seconds = random.randint(120, 600)
+            late_time = datetime.now(timezone.utc) - timedelta(seconds=lag_seconds)
+            order = generate_clean_order(fixed_time=late_time)
+            self._record_history(order)
+            return order["city"], json.dumps(order), "LATE"
+
+        # 4. Standard on-time event
+        order = generate_clean_order()
+        self._record_history(order)
+        return order["city"], json.dumps(order), "NORMAL"
+
+    def _generate_malformed_event(self) -> Tuple[str, str, str]:
+        """Injects either broken JSON syntax or schema corruption."""
+        malform_type = random.choice(["corrupt_json", "missing_fields", "invalid_type"])
+        city = random.choice(CITIES)
+
+        if malform_type == "corrupt_json":
+            # Unterminated / syntactically broken JSON string
+            payload = f'{{"order_id": "{uuid.uuid4()}", "city": "{city}", "amount": 250.00'
+            return city, payload, "MALFORMED"
+
+        if malform_type == "missing_fields":
+            # Missing mandatory order_id or event_time
+            payload = json.dumps({
+                "city": city,
+                "amount": 99.99,
+                "status": "PAID"
+                # missing order_id, user_id, event_time
+            })
+            return city, payload, "MALFORMED"
+
+        # invalid_type: amount is a string or non-numeric
+        payload = json.dumps({
+            "order_id": str(uuid.uuid4()),
+            "user_id": "usr_corrupted",
+            "amount": "NOT_A_NUMBER",
+            "city": city,
+            "status": "PAID",
+            "event_time": datetime.now(timezone.utc).isoformat()
+        })
+        return city, payload, "MALFORMED"
+
+    def _record_history(self, order: Dict[str, Any]) -> None:
+        """Maintains bounded ring buffer of recent events."""
+        self.order_history.append(order)
+        if len(self.order_history) > self.history_size:
+            self.order_history.pop(0)
