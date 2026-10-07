@@ -53,11 +53,46 @@ def generate_clean_order(
 
 class OrderEventGenerator:
     """
+    Stateful generator that injects:
+      1. Late events (~5% by default): event_time set 2-10 minutes in the past.
+      2. Duplicate events (~3% by default): re-transmits an existing order_id.
+      3. Malformed events (~1% by default): corrupt JSON or missing fields.
+    """
 
-
-class OrderEventGenerator:
-    """Generates simulated e-commerce order events with controlled anomalies."""
-    def __init__(self, late_pct=0.05, duplicate_pct=0.03, malformed_pct=0.01):
+    def __init__(
+        self,
+        late_pct: float = 0.05,
+        duplicate_pct: float = 0.03,
+        malformed_pct: float = 0.01,
+        history_size: int = 50
+    ):
         self.late_pct = late_pct
         self.duplicate_pct = duplicate_pct
         self.malformed_pct = malformed_pct
+        self.history_size = history_size
+        # Ring buffer of recent valid orders to sample duplicates from
+        self.order_history = []
+
+    def next_event(self) -> Tuple[str, str, str]:
+        """
+        Generates the next event tuple: (kafka_key, serialized_payload, event_tag).
+        
+        event_tag indicates: 'NORMAL', 'LATE', 'DUPLICATE', or 'MALFORMED'.
+        """
+        roll = random.random()
+
+        # Cumulative probability boundaries
+        malformed_thresh = self.malformed_pct
+        duplicate_thresh = malformed_thresh + self.duplicate_pct
+        late_thresh = duplicate_thresh + self.late_pct
+
+        # 1. Fault: Malformed payload
+        if roll < malformed_thresh:
+            return self._generate_malformed_event()
+
+        # 2. Fault: Duplicate event
+        if roll < duplicate_thresh:
+            if self.order_history:
+
+    def next_event(self):
+        return self._generate_valid_order()
