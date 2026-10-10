@@ -45,4 +45,30 @@ def parse_raw_kafka_stream(kafka_df: DataFrame):
     )
 
     # 3. Derive parsed timestamp to validate temporal format
+    parsed_df = parsed_df.withColumn(
+        "parsed_event_time",
+        F.to_timestamp(F.col("parsed.event_time"))
+    )
+
+    # 4. Strict validation predicate
+    is_valid = (
+        F.col("parsed._corrupt_record").isNull() &
+        F.col("parsed.order_id").isNotNull() &
+        (F.length(F.col("parsed.order_id")) == 36) &
+        F.col("parsed.user_id").isNotNull() &
+        F.col("parsed.amount").isNotNull() &
+        (F.col("parsed.amount") > 0.0) &
+        F.col("parsed.city").isNotNull() &
+        F.col("parsed.status").isin(["CREATED", "PAID", "FAILED", "CANCELLED"]) &
+        F.col("parsed_event_time").isNotNull()
+    )
+
+    # 5. Build Valid DataFrame
+    valid_df = parsed_df.filter(is_valid).select(
+        F.col("parsed.order_id").alias("order_id"),
+        F.col("parsed.user_id").alias("user_id"),
+        F.round(F.col("parsed.amount"), 2).alias("amount"),
+        F.col("parsed.city").alias("city"),
+        F.col("parsed.status").alias("status"),
+        F.col("parsed_event_time").alias("event_time"),
 
