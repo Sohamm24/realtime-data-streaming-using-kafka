@@ -71,4 +71,39 @@ def parse_raw_kafka_stream(kafka_df: DataFrame):
         F.col("parsed.city").alias("city"),
         F.col("parsed.status").alias("status"),
         F.col("parsed_event_time").alias("event_time"),
+        F.col("kafka_partition"),
+        F.col("kafka_offset")
+    )
+
+    # 6. Build Dead-Letter DataFrame with contextual diagnostics
+    dead_letter_df = parsed_df.filter(~is_valid).select(
+        F.coalesce(F.col("parsed._corrupt_record"), F.col("raw_value")).alias("raw_payload"),
+        F.when(F.col("parsed._corrupt_record").isNotNull(), "MALFORMED_JSON_SYNTAX")
+         .when(F.col("parsed.order_id").isNull(), "MISSING_ORDER_ID")
+         .when(F.length(F.col("parsed.order_id")) != 36, "INVALID_ORDER_ID_UUID")
+         .when(F.col("parsed.amount").isNull(), "MISSING_OR_NON_NUMERIC_AMOUNT")
+         .when(F.col("parsed.amount") <= 0.0, "NON_POSITIVE_AMOUNT")
+         .when(F.col("parsed_event_time").isNull(), "INVALID_TIMESTAMP_FORMAT")
+         .otherwise("SCHEMA_VALIDATION_FAILURE").alias("error_reason"),
+        F.col("kafka_key"),
+        F.col("kafka_partition").cast("string"),
+        F.col("kafka_offset").cast("string"),
+        F.current_timestamp().alias("ingest_time")
+    )
+
+    return valid_df, dead_letter_df
+
+
+def deduplicate_orders(df: DataFrame, watermark_duration: str = "2 minutes") -> DataFrame:
+    """
+    Deduplicates orders by `order_id` within the specified watermark.
+
+    Trade-off & Interview Explanation:
+      - Watermarking: `withWatermark("event_time", watermark_duration)` establishes a
+        moving temporal threshold: `watermark = max(event_time) - watermark_duration`.
+      - State Management: Structured Streaming stores seen order_ids in an internal
+        state store (in-memory / RocksDB). Without a watermark, Spark would retain every
+        order_id forever, eventually causing OutOfMemoryError.
+      - With a 2-minute watermark, Spark safely purges state keys older than the watermark,
+        keeping memory overhead strictly bounded.
 
