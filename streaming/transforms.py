@@ -106,4 +106,54 @@ def deduplicate_orders(df: DataFrame, watermark_duration: str = "2 minutes") -> 
         order_id forever, eventually causing OutOfMemoryError.
       - With a 2-minute watermark, Spark safely purges state keys older than the watermark,
         keeping memory overhead strictly bounded.
+      - Any duplicate event arriving within 2 minutes of the original will be dropped.
+    """
+    watermarked_df = df.withWatermark("event_time", watermark_duration)
 
+    # In Spark Structured Streaming, deduplicating on a streaming dataset with a watermark
+    # requires event_time to be present in the deduplication keys or watermark constraint.
+    return watermarked_df.dropDuplicates(["order_id", "event_time"])
+
+
+def aggregate_windowed_orders(
+    df: DataFrame,
+    window_duration: str = "1 minute"
+) -> DataFrame:
+    """
+    Computes 1-minute tumbling window aggregations per city.
+
+    Metrics calculated:
+      - total_orders: total count of orders in the window.
+      - total_revenue: sum of transaction amounts (rounded to 2 decimal places).
+      - counts per status: paid_orders, created_orders, failed_orders, cancelled_orders.
+
+    Interview Note on Append Mode:
+      When writing windowed aggregations in 'append' mode, Spark emits an aggregation row
+      ONLY after the watermark has passed the end of the window:
+        `watermark > window.end`.
+      This guarantees the window is finalized and no further updates will arrive.
+    """
+    windowed = df.groupBy(
+        F.window(F.col("event_time"), window_duration),
+        F.col("city")
+    ).agg(
+        F.count("order_id").alias("total_orders"),
+        F.round(F.sum("amount"), 2).alias("total_revenue"),
+        F.count(F.when(F.col("status") == "PAID", 1)).alias("paid_orders"),
+        F.count(F.when(F.col("status") == "CREATED", 1)).alias("created_orders"),
+        F.count(F.when(F.col("status") == "FAILED", 1)).alias("failed_orders"),
+        F.count(F.when(F.col("status") == "CANCELLED", 1)).alias("cancelled_orders")
+    )
+
+    # Flatten window boundaries into explicit timestamp columns for downstream queries
+    return windowed.select(
+        F.col("window.start").alias("window_start"),
+        F.col("window.end").alias("window_end"),
+        F.col("city"),
+        F.col("total_orders"),
+        F.col("total_revenue"),
+        F.col("paid_orders"),
+        F.col("created_orders"),
+        F.col("failed_orders"),
+        F.col("cancelled_orders")
+    )
