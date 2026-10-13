@@ -87,3 +87,54 @@ services:
   # Python Producer Service
   # Generates orders and publishes to Kafka with city as key
   # ============================================================================
+  producer:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile
+    container_name: orders-producer
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKER_INTERNAL: kafka:29092
+    depends_on:
+      init-kafka:
+        condition: service_completed_successfully
+    networks:
+      - orders-network
+    restart: on-failure
+
+  # ============================================================================
+  # Spark Structured Streaming Service
+  # Local mode PySpark streaming job with Delta Lake & Dead-Letter isolation
+  # ============================================================================
+  spark:
+    build:
+      context: ./streaming
+      dockerfile: Dockerfile
+    container_name: orders-spark
+    env_file:
+      - .env
+    environment:
+      KAFKA_BROKER_INTERNAL: kafka:29092
+      DATA_DIR: /app/data
+      CHECKPOINT_DIR: /app/data/checkpoints
+      DELTA_AGG_DIR: /app/data/delta/orders_agg
+      DELTA_CLEAN_DIR: /app/data/delta/orders_clean
+      DEAD_LETTER_DIR: /app/data/dead_letter
+      ENABLE_CONSOLE_SINK: 'true'
+    volumes:
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+      - ./tests:/app/tests
+      - ./producer:/app/producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - orders-network
+    restart: on-failure
+
+networks:
+  orders-network:
+    name: orders-network
+    driver: bridge
