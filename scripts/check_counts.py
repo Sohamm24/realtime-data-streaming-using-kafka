@@ -79,5 +79,26 @@ def main():
 
     duplicate_discrepancy = total_clean - unique_orders
 
+    print("--------------------------------------------------------------------------------")
+    print(f" [1] CLEAN ORDERS (Delta Lake)")
+    print(f"     Total Clean Rows Ingested:       {total_clean:,}")
+    print(f"     Distinct Order IDs:              {unique_orders:,}")
+    print(f"     Deduplication Check:             {'PERFECT (0 duplicate order_ids stored)' if duplicate_discrepancy == 0 else f'WARNING: {duplicate_discrepancy} duplicates found'}")
+    print("--------------------------------------------------------------------------------")
+    print(f" [2] DEAD-LETTER STORE (Isolated Faults)")
+    print(f"     Total Malformed Messages:        {total_dlq:,}")
+    print("--------------------------------------------------------------------------------")
+    print(f" [3] WATERMARKED WINDOWED AGGREGATES (Delta Lake)")
+    print(f"     Total Finalized Window Rows:     {total_windows:,}")
+    print(f"     Total Aggregated Orders Emitted: {sum_agg_orders:,}")
+    print(f"     Total Revenue Settled (INR):     Rs. {total_revenue:,.2f}")
+    print("--------------------------------------------------------------------------------")
+    print(" [4] PIPELINE HEALTH SUMMARY")
+    total_accounted = total_clean + total_dlq
+    print(f"     Total Accounted Messages:        {total_accounted:,} (Clean: {total_clean:,} + DLQ: {total_dlq:,})")
+    print(f"     Watermark Lag Behavior:          Aggregated orders lag clean orders by watermark (2m)")
+    print("================================================================================\n")
+
+
 if __name__ == "__main__":
-    audit_pipeline()
+    main()
