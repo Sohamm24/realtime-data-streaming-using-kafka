@@ -190,3 +190,64 @@ Batch: 0
 
 ---
 
+## Senior Data Engineering Interview Notes
+
+### 1. Why Apache Kafka?
+Kafka acts as a durable, distributed write-ahead log. Unlike traditional message brokers (like RabbitMQ) that delete messages upon acknowledgement, Kafka decouples producers and consumers by retaining committed offsets. This provides:
+- **Consumer Replayability**: Downstream engines can replay messages from historical offsets upon failure or when redeploying updated transformation logic.
+- **Backpressure Buffer**: When downstream processing experiences spikes or garbage collection pauses, Kafka absorbs incoming spikes without dropping events.
+
+### 2. Why Partition by `city`?
+In Kafka, partition assignment is determined by `murmur2_hash(key) % num_partitions`. Keying by `city` ensures:
+- **Per-City Ordering**: All events for a specific metro land on the same Kafka partition in strict sequential order.
+- **Partition Colocation**: When scaling consumers, a single consumer thread/executor handles an entire city's stream, simplifying stateful grouping.
+
+### 3. Event Time vs. Processing Time
+- **Processing Time**: The local system clock of the machine executing the Spark micro-batch when the record is processed. Susceptible to clock skew, network lag, and execution pauses.
+- **Event Time**: The timestamp embedded within the order payload when the user clicked "Pay" (`event_time`). Essential for real-time finance and e-commerce analytics so that delayed network packets are attributed to their true temporal window.
+
+### 4. How Watermarks Work and Bounded State Memory
+Watermarking defines how late an event can arrive before Spark assumes no more data will arrive for that window:
+$$\text{Watermark} = \max(\text{event\_time}) - \text{Watermark Duration (2 min)}$$
+- **State-Size Trade-off**: Without watermarking, deduplicating on `order_id` or aggregating on tumbling windows would require maintaining a state store of seen keys indefinitely. The state store (in JVM heap or RocksDB) would grow unboundedly and crash the node with OutOfMemoryError.
+- **Pruning**: A 2-minute watermark instructs Spark to purge state keys older than the moving watermark, guaranteeing strictly bounded memory consumption.
+
+### 5. Why Append Mode Emits Windows Only After Watermark
+In Spark Structured Streaming:
+- `update` mode outputs window metrics as each micro-batch updates them.
+- `append` mode requires the output row to be final and immutable. Spark will **only emit an aggregation row once `watermark > window.end`**. This guarantees that all potential late events for that 1-minute window have passed the cutoff and the window will never be modified again.
+
+### 6. Exactly-Once Guarantees vs. At-Least-Once
+- **Producer**: Uses `acks=all` with retry logic, providing at-least-once delivery to Kafka. Network retries can introduce duplicates (~3% in our simulator).
+- **Stream Ingestion**: Spark reads offsets deterministically from Kafka.
+- **Deduplication**: `deduplicate_orders` filters out duplicate `(order_id, event_time)` pairs within the 2-minute watermark.
+- **Delta Lake Sink**: Delta Lake provides ACID transactions with atomic idempotency based on commit logs (`_delta_log`). If a micro-batch fails mid-execution, Spark restarts from the last committed checkpoint offset, rolling back uncommitted files and ensuring end-to-end exactly-once semantics.
+
+### 7. Checkpoints and Fault Recovery (Restart Test)
+When `orders-spark` is terminated and restarted:
+1. It reads its commit log and offset metadata from `./data/checkpoints/`.
+2. It retrieves the exact Kafka partition offsets that were successfully committed in the last micro-batch.
+3. It resumes ingestion from those exact offsets without skipping messages or double-writing to Delta Lake.
+
+### 8. Backpressure and `maxOffsetsPerTrigger`
+When a producer rate spikes (e.g., from 10 eps to 5,000 eps) or the streaming job recovers after downtime:
+- Without rate limits, Spark attempts to consume the entire backlog in a single massive batch, causing JVM memory pressure, GC thrashing, and executor OOM crashes.
+- Setting `.option("maxOffsetsPerTrigger", 500)` imposes a ceiling on each micro-batch. Spark consumes at most 500 records per trigger, steadily and predictably clearing backlog lag without exceeding memory thresholds.
+
+### 9. Scaling to Enterprise Cloud Architectures
+| Local Docker Component | AWS Production Equivalent | Azure Production Equivalent |
+| :--- | :--- | :--- |
+| **Kafka (KRaft)** | Amazon MSK / Amazon Kinesis | Azure Event Hubs (Kafka endpoint) |
+| **Spark Streaming**| Databricks on AWS / Amazon EMR | Azure Databricks / Azure Synapse Spark |
+| **Local `./data` mount**| Amazon S3 Lakehouse | Azure Data Lake Storage Gen2 (ADLS) |
+| **Dead-Letter Folder**| Amazon S3 DLQ + SQS alerting | ADLS DLQ + Event Grid alerting |
+| **DuckDB Analytics** | AWS Athena / Databricks SQL | Azure Synapse Serverless / Power BI |
+
+---
+
+## Known Limitations & Honest Architecture Disclosure
+
+This project is a high-fidelity local simulation designed for portfolio presentation and architecture mastery:
+1. **Single-Broker Setup**: Kafka runs as a single KRaft broker on a single machine with `replication-factor: 1`. In enterprise production, Kafka runs in clusters of 3+ brokers across multiple Availability Zones with replication factor 3 and `min.insync.replicas: 2`.
+2. **Single-Node Local Spark**: Spark runs in `local[2]` mode inside Docker. In enterprise cloud deployments, Spark runs across a distributed cluster with a dedicated cluster manager (Kubernetes, YARN, or Databricks serverless).
+3. **Simulated Data**: Events are generated using a localized Python simulator simulating UPI/card behaviors rather than a live payment gateway webhook.
