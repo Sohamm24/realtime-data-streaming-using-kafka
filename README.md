@@ -98,7 +98,7 @@ flowchart TD
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
 | Layer | Technology | Version | Role |
 |:---|:---|:---:|:---|
@@ -385,11 +385,3 @@ Tests cover:
 - **`test_transforms.py`** — PySpark parse correctness, deduplication, windowing, DLQ routing
 
 ---
-
-<div align="center">
-
-**Built as a production-quality portfolio project demonstrating senior data engineering patterns.**
-
-*Apache Kafka · Apache Spark · Delta Lake · DuckDB · Docker*
-
-</div>
