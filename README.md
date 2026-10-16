@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🚀 Real-Time Orders Streaming Lakehouse
+#  Real-Time Orders Streaming Lakehouse
 
 **A production-grade, fault-tolerant streaming pipeline processing simulated e-commerce UPI order events — built entirely on open-source tooling with zero cloud dependencies.**
 
@@ -16,7 +16,7 @@
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#-overview)
 - [Architecture](#-architecture)
@@ -31,7 +31,7 @@
 
 ---
 
-## 🔍 Overview
+## Overview
 
 This project implements an **end-to-end real-time streaming Lakehouse** that processes simulated UPI e-commerce order events at **10 events/sec** across **10 Indian metro cities**. It demonstrates production-grade streaming engineering patterns including:
 
@@ -48,20 +48,20 @@ This project implements an **end-to-end real-time streaming Lakehouse** that pro
 
 ---
 
-## 🏗 Architecture
+##  Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Data_Generation["⚙️ Event Producer (Python 3.11)"]
+    subgraph Data_Generation[" Event Producer (Python 3.11)"]
         G["OrderEventGenerator"] -->|"Fault Injection:\n~5% Late  ~3% Dup  ~1% Malformed"| P["KafkaProducer\n(Key = City)"]
     end
 
-    subgraph Messaging_Backbone["📨 Messaging Backbone (KRaft Mode)"]
+    subgraph Messaging_Backbone[" Messaging Backbone (KRaft Mode)"]
         P -->|"Internal: kafka:29092"| K["Kafka Broker: orders\n(3 Partitions, Key = City)"]
         KUI["Kafka UI (Port 8081)"] -.-|"Inspect Partitions & Offsets"| K
     end
 
-    subgraph Stream_Engine["⚡ PySpark Structured Streaming (local[2])"]
+    subgraph Stream_Engine[" PySpark Structured Streaming (local[2])"]
         K -->|"readStream\nmaxOffsetsPerTrigger=500"| S["stream_job.py"]
         S -->|"Explicit Schema\nwith _corrupt_record"| SPLIT{"Schema & Syntax\nValidation"}
 
@@ -73,14 +73,14 @@ flowchart TD
         WIN -->|"Watermark Passed Window End"| AGG_SINK["Delta Sink: orders_agg\n(Append Mode, Checkpointed)"]
     end
 
-    subgraph Storage_Layer["🗄️ Local Lakehouse Storage"]
+    subgraph Storage_Layer[" Local Lakehouse Storage"]
         DLQ --> FS_DLQ["./data/dead_letter/"]
         CLEAN_SINK --> FS_CLEAN["./data/delta/orders_clean/"]
         AGG_SINK --> FS_AGG["./data/delta/orders_agg/"]
         S -.-|"Offset & State Recovery"| FS_CHK["./data/checkpoints/"]
     end
 
-    subgraph Analytics_Consumption["📊 Analytics & Monitoring"]
+    subgraph Analytics_Consumption[" Analytics & Monitoring"]
         FS_CLEAN -.- DUCK["DuckDB (delta_scan)"]
         FS_AGG -.- DUCK
         FS_DLQ -.- DUCK
@@ -112,7 +112,7 @@ flowchart TD
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 realtime-data-streaming-using-kafka/
@@ -155,7 +155,7 @@ realtime-data-streaming-using-kafka/
 
 ---
 
-## ⚡ Quick Start
+##  Quick Start
 
 ### Prerequisites
 - **Docker Desktop** installed and running (8 GB RAM recommended)
@@ -202,16 +202,16 @@ make clean   # Stop containers AND purge all local data/checkpoints
 
 ---
 
-## 📊 Live Output & Results
+## Live Output & Results
 
 ### Pipeline Integrity Audit (`make counts`)
 
 ![Pipeline Integrity Audit Report](docs/assets/audit_report.jpg)
 
 **Key verified outcomes:**
-- ✅ **5,693 clean orders** ingested with **zero duplicate order IDs** in Delta Lake
-- ✅ **61 malformed events** isolated to the Dead-Letter Queue
-- ✅ **₹11,374,662.36 total revenue** settled across **139 finalized 1-minute windows**
+-  **5,693 clean orders** ingested with **zero duplicate order IDs** in Delta Lake
+-  **61 malformed events** isolated to the Dead-Letter Queue
+-  **₹11,374,662.36 total revenue** settled across **139 finalized 1-minute windows**
 
 ---
 
@@ -254,7 +254,7 @@ DuckDB querying the dead-letter JSON store in real time, surfacing:
 
 ---
 
-## 🛡 Fault Tolerance Validation
+##  Fault Tolerance Validation
 
 The pipeline was validated under three failure scenarios:
 
@@ -266,7 +266,7 @@ docker start orders-spark
 # Spark reads checkpoint, resumes from exact last committed offset
 # No messages skipped. No double-writes to Delta Lake.
 ```
-**Result:** ✅ Zero data loss. Zero duplicates. Delta ACID log rolled back uncommitted micro-batch files.
+**Result:**  Zero data loss. Zero duplicates. Delta ACID log rolled back uncommitted micro-batch files.
 
 ### Scenario 2 — Intentional Fault Injection (Fuzz Testing)
 The `OrderEventGenerator` injects synthetic faults at configurable rates:
@@ -283,11 +283,11 @@ The `OrderEventGenerator` injects synthetic faults at configurable rates:
 # Without limit: Spark OOM crash under backlog
 # With limit=500: Steady catch-up, no memory pressure
 ```
-**Result:** ✅ Controlled recovery. Backlog cleared in steady-state batches within minutes.
+**Result:**  Controlled recovery. Backlog cleared in steady-state batches within minutes.
 
 ---
 
-## 🧠 Design Decisions
+##  Design Decisions
 
 <details>
 <summary><b>Why Apache Kafka with KRaft mode?</b></summary>
@@ -350,7 +350,7 @@ Without watermarking, deduplicating on `order_id` would accumulate an unbounded 
 
 ---
 
-## ☁️ Cloud Equivalents
+## Cloud Equivalents
 
 | Local Component | AWS Production | Azure Production |
 |:---|:---|:---|
@@ -362,7 +362,7 @@ Without watermarking, deduplicating on `order_id` would accumulate an unbounded 
 
 ---
 
-## ⚠️ Known Limitations
+##  Known Limitations
 
 This project is a high-fidelity local simulation designed for architecture mastery and portfolio demonstration:
 
@@ -372,7 +372,7 @@ This project is a high-fidelity local simulation designed for architecture maste
 
 ---
 
-## 🧪 Running Tests
+## Running Tests
 
 ```bash
 make test
